@@ -1,0 +1,235 @@
+---
+title: "blockRAR: An R package for Simulation of Block Design for Response-Adaptive Randomization"
+author: "Thevaa Chandereng, Rick Chappell"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{blockRAR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+  \usepackage[utf8]{inputenc}
+---
+  
+  
+```{r setup, echo=FALSE, results="hide"}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+
+# Introduction
+
+Response-Adaptive Randomization (RAR) design utilizes accrual information to tilt the randomization ratio to the better performing treatment group.
+Patients enrolled in these trials are not only treated to obtain effectiveness of a treatment but also treated to the best way possible. 
+Altering the randomization ratio drastically can potentially affect the bias in a trial especially if one treatment is very superior to the other treatment. The major drawback to response-adaptive randomization design is that the trial needs to be short to be able to obtain the outcome of the trial for future randomization.
+There are various methods developed to address some of this flaws besides developing a proper design for response-adaptive randomization.
+
+Time drift can lead to bias by confounding the treatment effect with time effects.
+Time trends are nearly universally ignored among RAR proponents.
+Besides skewed randomization ratio, time trend can be a confounding factor as illustrated in the example below. 
+
+```{r, echo = FALSE, fig=TRUE, fig.width = 6, fig.height = 6}
+library(ggplot2)
+suppressWarnings(RNGversion("3.5.0"))
+set.seed(20999)
+
+
+dat <- data.frame(
+prob_response <- 0.5 + cumsum(c(0, runif(49, 0, 0.01))) + c(0, rnorm(49, 0, 0.01)),
+time <- 0:49
+)
+dat$rand.ratio <- dat$prob_response
+
+
+p <- ggplot(dat, aes(x = time))
+p <- p + geom_line(aes(y = prob_response), color = "blue")
+p <- p + scale_y_continuous(sec.axis = sec_axis(~., name = "Randomization Fraction for Treatment"))
+p <- p + scale_colour_manual(values = c("blue"))
+p <- p + labs(y = "Probability of Response (Clinical)",
+              x = "Time (months)")
+p <- p + theme(axis.text=element_text(size=12),
+               axis.title=element_text(size=16,face="bold"))
+p
+```
+
+Example of time trend issue in response-adaptive randomization (RAR) design:
+
+ - The disease itself can change, sometimes radically (e.g., AIDS in the early 1990s).
+- Our definition of the disease can change due to new scientific discoveries or diagnostic methods (e.g., stage migration in nasopharyngeal carcinoma due to the introduction of CAT scans to Hong Kong ~ 2005).
+- Inclusion criteria can change, either formally (in which case we can stratify analysis on before vs. after the change) or informally due to “recruiting zeal” or other issues (in which case we can’t).
+- Centers can change, such as when VAs enter the trial earlier or later than academic institutions.
+- Patients within centers can change, especially but not only with chronic diseases, due to the phenomenon of “A queue of desperate patients lining up at the door”.
+- In addition to these examples, an investigator who wants to game the system could cross his/her fingers that his favored treatment arm is ahead, then progressively enroll better prognosis patients over time
+
+Therefore, we designed a stratified group-sequential method on altering the randomization ratio in a block/group level to address this issue instead of altering the randomization ratio by patient basis.
+In each block/group, the randomization ratio is kept constant.
+However, the ideal number of block/group is still vague.  
+
+
+`blockRAR` is an R package for the simulation of response-adaptive randomization trials with binomial outcomes where patients are assigned in block and randomization ratio is altered by block rather than patient by patient basis using both frequentist and Bayesian method. For more details on the method, please look at our [preprint](https://arxiv.org/abs/1904.07758).
+
+If you use `blockRAR` in published research, please cite our preprint:
+
+Robust Response-Adaptive Randomization Design. Chandereng, T., & Chappell, R. (2019). [arXiv preprint arXiv:1904.07758](https://arxiv.org/abs/1904.07758).
+
+If after reading through this vignette you have questions or problems using `blockRAR`, please post them to https://github.com/thevaachandereng/blockRAR/issues. This will notify the package maintainers and we can work to address the issue(s). Please note that comments and questions should **not** be emailed directly to the package authors.
+
+
+# Running blockRAR
+
+Prior to analyzing your data, the R package needs to be installed. The easiest way to install `blockRAR` is through CRAN:
+
+```{r, eval = FALSE, echo=TRUE}
+install.packages("blockRAR")
+```
+
+There are additional ways to download `blockRAR`. The first option is most useful for downloading a specific version of `blockRAR` (which can be found at https://github.com/thevaachandereng/bayesCT/releases):
+
+```{r, eval = FALSE, echo=TRUE}
+devtools::install_github("thevaachandereng/blockRAR@vx.xx.x")
+# or 
+devtools::install_version("blockRAR", version = "x.x.x", repos = "http://cran.us.r-project.org")
+```
+
+The second option is to download the most recent stable version through GitHub:
+
+```{r, cache=FALSE, warning=FALSE, comment=FALSE, eval = FALSE, echo=TRUE, results="hide"}
+devtools::install_github("thevaachandereng/blockRAR")
+```
+
+After successful installation, the package must be loaded into the working space:
+
+```{r lib, results="asis", eval=TRUE, echo=TRUE}
+library(blockRAR)
+```
+
+# Required input
+In this section, we will describe each input for the frequentist and Bayesian approach of block design for RAR. 
+
+## Frequentist Approach
+
+**p_control**:  The object **p_control** has to be $0 <$ **p_control** $< 1$. 
+This determines the proportion of events in the control group. 
+
+**p_treatment**:  The object **p_treatment** has to be $0 <$ **p_treatment** $< 1$. 
+This determines the proportion of events in the treatment group. 
+
+**N_total**: The object **N_total** determines the targeted sample size of subjects enrolled in the trial. 
+When early stopping criteria is specified, the total sample size enrolled in the trial might be smaller than the one used.  
+
+**block_number**: The object **block_number** determines the number of blocks/groups used in the design of the trial. The value of **block_number** needs to smaller or equal to the size of **N_total**. For traditional RAR, set **block_number** equal to **N_total**. For traditional RCT, select **block_number** to 1. The early stopping criteria is applied after completing enrollment and data collection in each block. The randomization ratio is also altered at the block level. The default **block_number** is set to 4. 
+
+**drift**: The object **drift** controls the size of the patient-drift as described in the preprint.The **drift** changes the magnitude of proportion of events in either positive/negative direction. The drift is applied at the block level where  **p_control** and **p_treatment** both increasing in a step-wise manner at each block level from their initial values to final value of the **drift**. Please make sure that the drift is within the limit specified, 0 < **p_treatment** + **drift** < 1 and 0 < **p_control** + **drift** < 1.
+
+**simulation**: The object **simulation** sets the number of trials to be run. 
+
+**conf_int**: The object **conf_int** determines the confidence interval of the trial. This value is same as 1- $\alpha$ in the clinical setting. 
+
+**alternative**: The object **alternative** only takes two value "greater" (default) or "less". If **alternative** is greater then the the trial is successful **p_treatment** > **p_control** and vice versa.
+
+**correct**: The object **correct** is a logical indicator. If correct is set to FALSE (default), the Yates-continuity correction is not applied and vice-versa.
+
+**replace**: The object **replace** is a logical indicator. If replace is set to TRUE (default), the sampling is done with replacement. If replace is set to FALSE, the replacement is done without replacement. 
+
+**early_stop**: The object **early_stop** is a logical indicator. The default is set to FALSE, which does not allow early stopping. If early stopping is applied, the early stopping is done at block level using the Lan-DeMets alpha-spending function. 
+
+
+## Bayesian Approach
+
+**p_control**:  The object **p_control** has to be $0 <$ **p_control** $< 1$. 
+This determines the proportion of events in the control group. 
+
+**p_treatment**:  The object **p_treatment** has to be $0 <$ **p_treatment** $< 1$. 
+This determines the proportion of events in the treatment group. 
+
+**N_total**: The object **N_total** determines the targeted sample size of subjects enrolled in the trial. 
+When early stopping criteria is specified, the total sample size enrolled in the trial might be smaller than the one used.  
+
+**block_number**: The object **block_number** determines the number of blocks/groups used in the design of the trial. The value of **block_number** needs to smaller or equal to the size of **N_total**. For traditional RAR, set **block_number** equal to **N_total**. For traditional RCT, select **block_number** to 1. The early stopping criteria is applied after completing enrollment and data collection in each block. The randomization ratio is also altered at the block level. The default **block_number** is set to 4. 
+
+**drift**: The object **drift** controls the size of the patient-drift as described in the preprint.The **drift** changes the magnitude of proportion of events in either positive/negative direction. The drift is applied at the block level where  **p_control** and **p_treatment** both increasing in a step-wise manner at each block level from their initial values to final value of the **drift**. Please make sure that the drift is within the limit specified, 0 < **p_treatment** + **drift** < 1 and 0 < **p_control** + **drift** < 1.
+
+**simulation**: The object **simulation** sets the number of trials to be run. 
+
+**a0**: The object **a0** set the parameter value of a in the non-informative prior in Beta(a, b).  
+
+**b0**: The object **b0** set the parameter value of b in the non-informative prior in Beta(a, b).   
+
+**p**: The object **p** sets the power in the allocation probability. The probability of randomizing subjects to treatment A in stratum j is defined as
+$$\pi_{j, A} = \frac{(p_{A>B} (data))^ {p}}{(p_{A>B} (data))^ {p} + (p_{B>A} (data))^ {p}},$$
+where $p_{A > B}(data)$ is the posterior probability that treatment A has a higher success rate than  treatment B and $p_{A>B} (data)) = 1 - p_{B>A} (data))$.
+
+**number_mcmc**: The object **number_mcmc** determines the number of posterior sample draw randomly using Monte-Carlo method. The default is set to 10,000.
+
+**prob_accept_ha**: The object **prob_accept_ha** controls the posterior probability of accepting the alternative hypothesis. The default is set to 0.95. 
+
+**early_success_prob**: The object **early_success_prob** sets the probability of stopping early for success. The default is set to 0.99. Change this value to 1 if you do not want to stop early for success. 
+
+**futility_prob**: The object **futility_prob** sets the probability of stopping early for futility. The default is set to 0.01. Change this value to 0 if you do not want to stop early for futility. 
+
+**alternative**: The object **alternative** only takes two value "greater" (default) or "less". If **alternative** is greater then the the trial is successful **p_treatment** > **p_control** and vice versa.
+
+
+# Obtaining Power and Sample Size 
+
+blockRAR computes power (true-positive) and return several outputs:
+power (proportion of true-positive), mean estimated proportion of events in the control and treatment group,
+stratified proportion difference in treatment, sample size enrolled, sample size in each treatment group.
+
+## Frequentist Approach
+
+Computing power, stratified difference in treatment proportion using the **binomialfreq** function.
+
+An example function execution with proportion of events in control is 0.25, proportion of events in treatment is 0.45, targeted sample size of 200, 5 number of blocks where randomization ratio is altered, no drift is applied, $\alpha$ of 0.05, alternative of "greater", sampling with replacement and early stopping not applied. 
+
+```{r, warning=FALSE}
+binomialfreq(p_control    = 0.25, 
+             p_treatment  = 0.45, 
+             N_total      = 200, 
+             block_number = 5,  
+             drift        = 0, 
+             simulation   = 100, 
+             conf_int     = 0.95,
+             alternative  = "greater",
+             replace      = TRUE, 
+             early_stop   = FALSE)
+```
+
+
+
+## Bayesian Approach 
+Computing power, stratified difference in treatment proportion using the **binomialbayes** function.
+
+An example function execution with proportion of events in control is 0.35, proportion of events in treatment is 0.35, targeted sample size of 150, 2 number of blocks where randomization ratio is altered, 0.10 drift is applied, $Beta(0.5, 0.5)$ non-informative prior is used, probability of accepting alternative of 0.95, alternative of "greater", sampling with replacement and early stopping not applied. 
+
+```{r}
+binomialbayes(p_control          = 0.35, 
+              p_treatment        = 0.35, 
+              N_total            = 150, 
+              block_number       = 2,
+              drift              = 0.10,
+              simulation         = 50,
+              a0                 = 0.5,
+              b0                 = 0.5, 
+              number_mcmc        = 10000, 
+              prob_accept_ha     = 0.95,
+              early_success_prob = 1,
+              futility_prob      = 0,
+              alternative        = "greater")
+```
+
+
+
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+
+
+
