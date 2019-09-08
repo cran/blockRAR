@@ -154,19 +154,20 @@ binomialfreq <- function(
   #assigning power to 0
   power <- 0
 
-  # assigning overall variables as NULL
+  # assigning overall variables as NULL and drift for patient by patient
   N_control            <- NULL
   N_treatment          <- NULL
   sample_size          <- NULL
   p_control_estimate   <- NULL
   p_treatment_estimate <- NULL
   prop_diff_estimate   <- NULL
+  drift_p              <- seq(drift / N_total, drift,  length.out = N_total)
 
   # looping overall all simulation
   for(k in 1:simulation){
 
     # assigning variables as NULL for each simulation
-    data_total            <- NULL
+    data_total            <- data.frame()
     test_stat             <- 0
     index                 <- block_number
 
@@ -175,7 +176,7 @@ binomialfreq <- function(
 
       # create a data summary from previos block or if its null, create an empty
       # summary
-      if(!is.null(data_total) & length(levels(factor(data_total$treatment))) == 2){
+      if(dim(data_total)[1] != 0 & length(levels(factor(data_total$treatment))) == 2){
         ctrl_prop <- mean(as.numeric(as.character(data_total$outcome[data_total$treatment == 0])))
         trt_prop <- mean(as.numeric(as.character(data_total$outcome[data_total$treatment == 1])))
       }
@@ -188,15 +189,15 @@ binomialfreq <- function(
       if(ctrl_prop == 0 | trt_prop == 0 |
          ctrl_prop == 1 | trt_prop == 1 |
          is.null(data_total)){
-        rr <- 1
+        prob_trt <- 0.5
       }
       # if the alternative is greater, use proportion to set randomization ratio
       else if(alternative == "greater"){
-        rr <- as.numeric(sqrt(trt_prop / ctrl_prop))
+        prob_trt <- sqrt(trt_prop) / (sqrt(ctrl_prop) + sqrt(trt_prop))
       }
       # if the alternative is greater, use 1 - proportion to set randomization ratio
       else{
-        rr <- as.numeric(sqrt((1 - trt_prop) / (1 - ctrl_prop)))
+        prob_trt <-sqrt(1 - trt_prop) / (sqrt(1 - ctrl_prop) + sqrt(1 - trt_prop))
       }
 
       # generate data frame treatment assignment based on sampling and
@@ -204,32 +205,12 @@ binomialfreq <- function(
       data <- data.frame(
         treatment =
           if(replace == TRUE){
-            if((alternative == "less" &
-               (ctrl_prop >= trt_prop)) |
-               (alternative == "greater" &
-                (trt_prop > ctrl_prop))){
-              sample(0:1, replace = T, group[i], prob = c(1, rr))
-            }
-            else{
-              sample(0:1, replace = T, group[i], prob = c(rr, 1))
-            }
+            sample(0:1, replace = T, group[i], prob = c(1 - prob_trt, prob_trt))
           }
         else{
-          if((alternative == "less" &
-              (ctrl_prop >= trt_prop)) |
-             (alternative == "greater" &
-              (trt_prop >= ctrl_prop))){
-            sum_ratio <- rr + 1
-            sampling <- rep(c(0, 1), round(c(group[i] * 1 / sum_ratio - 0.0001,
-                                           group[i] * rr / sum_ratio + 0.0001)))
+            sampling <- rep(c(0, 1), round(c(group[i] * (1 - prob_trt) - 0.0001,
+                                           group[i] * prob_trt + 0.0001)))
             sample(sampling, length(sampling))
-          }
-          else{
-            sum_ratio <- rr + 1
-            sampling <- rep(c(0, 1), round(c(group[i] * rr / sum_ratio - 0.0001,
-                                             group[i] * 1 / sum_ratio + 0.0001)))
-            sample(sampling, length(sampling))
-          }
         },
         outcome = rep(NA, group[i]))
 
@@ -237,7 +218,7 @@ binomialfreq <- function(
       # of event in respective arm
       data$outcome <- rbinom(dim(data)[1], 1, prob = data$treatment * p_treatment +
                                (1 - data$treatment) * p_control +
-                               drift * sum(group[1:i]) / N_total)
+                               drift_p[((1:dim(data)[1]) + dim(data_total)[1])])
 
       # bind the data with previous block if available
       data_total <- rbind(data_total, data)

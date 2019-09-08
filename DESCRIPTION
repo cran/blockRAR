@@ -1,6 +1,5 @@
 Package: blockRAR
-Version: 1.0.0
-Date: 2019-04-25
+Version: 1.0.1
 Title: Block Design for Response-Adaptive Randomization
 Authors@R: c(person(given = "Thevaa",
              family = "Chandereng",
@@ -21,10 +20,10 @@ URL: https://github.com/thevaachandereng/blockRAR/
 BugReports: https://github.com/thevaachandereng/blockRAR/issues/
 Imports: dplyr, magrittr, ldbounds, tibble, bayesDP, arm
 NeedsCompilation: no
-Packaged: 2019-04-27 08:37:41 UTC; thevaasiinenchandereng
+Packaged: 2019-09-07 23:50:39 UTC; thevaasiinenchandereng
 Author: Thevaa Chandereng [aut, cre, cph]
     (<https://orcid.org/0000-0003-4078-9176>),
   Rick Chapppell [aut, cph]
 Maintainer: Thevaa Chandereng <chandereng@wisc.edu>
 Repository: CRAN
-Date/Publication: 2019-04-27 15:30:12 UTC
+Date/Publication: 2019-09-08 07:10:02 UTC
