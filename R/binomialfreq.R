@@ -24,6 +24,13 @@
 #'    the sampling is done based on randomization ratio provided with replacement.
 #' @param early_stop logical. A logical indicating whether the trials are stopped early
 #'    for success or futility.
+#' @param size_equal_randomization scalar. The number of run in patients because adaptive
+#'    randomization is applied.
+#' @param min_patient_earlystop scalar. Minimum number of patients before early stopping
+#'    rule is applied.
+#' @param max_prob scalar. The maximum probability for assigning to treatment/control
+#'    group is 0.8.
+#'
 #'
 #' @return a list with details on the simulation.
 #' \describe{
@@ -43,6 +50,8 @@
 #'   \item{\code{N_control}}{
 #'     vector. The number of patients enrolled in the experimental group for
 #'     each simulation.}
+#'   \item{\code{randomization_ratio}}{
+#'     matrix. The randomization ratio allocated for each block.}
 #' }
 #'
 #' @importFrom stats rbinom mantelhaen.test chisq.test
@@ -62,14 +71,17 @@ binomialfreq <- function(
   p_control,
   p_treatment,
   N_total,
-  block_number    = 4,
-  drift           = 0,
-  simulation      = 10000,
-  conf_int        = 0.95,
-  alternative     = "greater",
-  correct         = FALSE,
-  replace         = TRUE,
-  early_stop      = FALSE
+  block_number             = 4,
+  drift                    = 0,
+  simulation               = 10000,
+  conf_int                 = 0.95,
+  alternative              = "greater",
+  correct                  = FALSE,
+  replace                  = TRUE,
+  early_stop               = FALSE,
+  size_equal_randomization = 20,
+  min_patient_earlystop    = 20,
+  max_prob                 = 0.8
 ){
    # stop if proportion of control is not between 0 and 1.
   if((p_control <= 0 | p_control >= 1)){
@@ -146,9 +158,9 @@ binomialfreq <- function(
   # if we allow early stopping, compute the lan-demets bound
   if(early_stop){
     # divided time equally between 0 and 1 with the number of blocks
-    time <- seq(1 / block_number, 1, 1 / block_number)
+    time <- cumsum(group)[cumsum(group) > min_patient_earlystop] / N_total
     #using lan-demets bound, computing the early stopping criteria for the number of blocks
-    bounds <- bounds(time, iuse = c(1, 1), alpha = c(1 - conf_int, 1 - conf_int))$upper.bounds
+    bounds <- bounds(time, iuse = c(1, 1), alpha = c((1 - conf_int) / 2, (1 - conf_int) / 2))$upper.bounds
   }
 
   #assigning power to 0
@@ -162,6 +174,8 @@ binomialfreq <- function(
   p_treatment_estimate <- NULL
   prop_diff_estimate   <- NULL
   drift_p              <- seq(drift / N_total, drift,  length.out = N_total)
+  early_stopping       <- rep(0, simulation)
+  randomization        <- array(NA, c(simulation, block_number))
 
   # looping overall all simulation
   for(k in 1:simulation){
@@ -173,32 +187,44 @@ binomialfreq <- function(
 
     #looping over all blocks
     for(i in 1:block_number){
-
       # create a data summary from previos block or if its null, create an empty
       # summary
-      if(dim(data_total)[1] != 0 & length(levels(factor(data_total$treatment))) == 2){
-        ctrl_prop <- mean(as.numeric(as.character(data_total$outcome[data_total$treatment == 0])))
-        trt_prop <- mean(as.numeric(as.character(data_total$outcome[data_total$treatment == 1])))
+      if(nrow(data_total) != 0 & nrow(data_total) >= min_patient_earlystop){
+        y_ctr     <- sum(as.numeric(as.character(data_total$outcome[data_total$treatment == 0])))
+        N_ctr     <- length(as.numeric(as.character(data_total$outcome[data_total$treatment == 0])))
+        y_trt     <- sum(as.numeric(as.character(data_total$outcome[data_total$treatment == 1])))
+        N_trt     <- length(as.numeric(as.character(data_total$outcome[data_total$treatment == 1])))
       }
       else{
-        ctrl_prop <- 0
-        trt_prop <- 0
+        y_ctr     <- 0
+        N_ctr    <- 0
+        y_trt     <- 0
+        N_trt     <- 0
       }
 
-      ## if both event dont occur, dont change randomization ratio
-      if(ctrl_prop == 0 | trt_prop == 0 |
-         ctrl_prop == 1 | trt_prop == 1 |
-         is.null(data_total)){
-        prob_trt <- 0.5
-      }
       # if the alternative is greater, use proportion to set randomization ratio
-      else if(alternative == "greater"){
-        prob_trt <- sqrt(trt_prop) / (sqrt(ctrl_prop) + sqrt(trt_prop))
+      if(alternative == "greater"){
+        prob_trt <- (y_trt + 1) / (N_trt + 2) /
+                    ((y_trt + 1) / (N_trt + 2) + (y_ctr + 1) / (N_ctr + 2))
       }
       # if the alternative is greater, use 1 - proportion to set randomization ratio
       else{
-        prob_trt <-sqrt(1 - trt_prop) / (sqrt(1 - ctrl_prop) + sqrt(1 - trt_prop))
+        prob_trt <- (1 - (y_trt + 1) / (N_trt + 2)) /
+                   (1 - (y_trt + 1) / (N_trt + 2) + (1 - (y_ctr + 1) / (N_ctr + 2)))
       }
+
+      # maximum probability assigning to the treatment group is 0.8
+      if(prob_trt > max_prob){
+        prob_trt <- max_prob
+      }
+
+      # maximum probability assigning to the control group is 0.8
+      else if(prob_trt < (1 - max_prob)){
+        prob_trt <- 1 - max_prob
+      }
+
+      # storing info of prob_trt
+      randomization[k, i] <- prob_trt
 
       # generate data frame treatment assignment based on sampling and
       # alternative hypothesis. leave the outcome variable empty.
@@ -216,9 +242,9 @@ binomialfreq <- function(
 
       # fill in the outcome variable based on the treatment assignement and proportion
       # of event in respective arm
-      data$outcome <- rbinom(dim(data)[1], 1, prob = data$treatment * p_treatment +
+      data$outcome <- rbinom(nrow(data), 1, prob = data$treatment * p_treatment +
                                (1 - data$treatment) * p_control +
-                               drift_p[((1:dim(data)[1]) + dim(data_total)[1])])
+                               drift_p[((1:nrow(data)) + nrow(data_total))])
 
       # bind the data with previous block if available
       data_total <- rbind(data_total, data)
@@ -264,11 +290,20 @@ binomialfreq <- function(
                                                 correct = correct)$statistic))
       }
 
+      if(N_total / block_number > min_patient_earlystop){
+        bound_index <- i
+      }
+      else{
+        bound_index <- i - min_patient_earlystop / (N_total / block_number)
+      }
+
       # if we allow early stopping and the
       # the test_statistics exceed the lan-demets bound, quit the loop
-      if(early_stop){
-        if(test_stat > bounds[i]){
-          index <- i
+      if(early_stop & (nrow(data_total) > min_patient_earlystop) & (nrow(data_total) < N_total)){
+        if(test_stat > bounds[bound_index]){
+          index               <- i
+          early_stopping[k]   <- 1
+          randomization[k, (i + 1):block_number] <- 0
           break
         }
       }
@@ -294,7 +329,7 @@ binomialfreq <- function(
       if(((ctrl_prop - trt_prop >= 0) & alternative == "less") |
          ((trt_prop - ctrl_prop >= 0) & alternative == "greater")){
         p.val <- chisq.test(data_total$treatment, data_total$outcome,
-                            correct = correct)$p.value
+                            correct = correct)$p.value / 2
       }
       else{
         p.val <- 1
@@ -310,7 +345,7 @@ binomialfreq <- function(
     # control and treatment estimate
     N_control            <- c(N_control, sum(data_total$treatment == 0))
     N_treatment          <- c(N_treatment, sum(data_total$treatment == 1))
-    sample_size          <- c(sample_size, dim(data_total)[1])
+    sample_size          <- c(sample_size, nrow(data_total))
     p_control_estimate   <- c(p_control_estimate, ctrl_prop)
     p_treatment_estimate <- c(p_treatment_estimate, trt_prop)
     prop_diff_estimate   <- c(prop_diff_estimate, prop_diff)
@@ -330,7 +365,9 @@ binomialfreq <- function(
     prop_diff_estimate    = prop_diff_estimate,
     N_enrolled            = sample_size,
     N_control             = N_control,
-    N_treatment           = N_treatment
+    N_treatment           = N_treatment,
+    early_stop            = early_stopping,
+    randomization_ratio   = randomization
     )
 
   return(output)

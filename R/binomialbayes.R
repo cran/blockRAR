@@ -34,11 +34,12 @@
 #'   \item{\code{N_control}}{
 #'     vector. The number of patients enrolled in the experimental group for
 #'     each simulation.}
+#'   \item{\code{randomization_ratio}}{
+#'     matrix. The randomization ratio allocated for each block.}
 #' }
 #'
 #' @importFrom stats rbinom binomial coef quasi rbeta
 #' @importFrom arm bayesglm sim
-#' @importFrom bayesDP bdpbinomial
 #' @importFrom dplyr mutate group_by summarize
 #' @importFrom tibble as.tibble
 #'
@@ -53,17 +54,20 @@ binomialbayes <- function(
   p_control,
   p_treatment,
   N_total,
-  block_number       = 4,
-  drift              = 0,
-  simulation         = 10000,
-  a0                 = 0.5,
-  b0                 = 0.5,
-  p                  = 0.5,
-  number_mcmc        = 10000,
-  prob_accept_ha     = 0.95,
-  early_success_prob = 0.99,
-  futility_prob      = 0.01,
-  alternative        = "greater"
+  block_number              = 4,
+  drift                     = 0,
+  simulation                = 10000,
+  a0                        = 0.5,
+  b0                        = 0.5,
+  p                         = 0.5,
+  number_mcmc               = 10000,
+  prob_accept_ha            = 0.95,
+  early_success_prob        = 0.99,
+  futility_prob             = 0.01,
+  alternative               = "greater",
+  size_equal_randomization  = 20,
+  min_patient_earlystop     = 20,
+  max_prob                  = 0.8
   ){
 
   # stop if proportion of control is not between 0 and 1
@@ -108,10 +112,16 @@ binomialbayes <- function(
          in either the control or treatment group, pick a lower value for drift!")
   }
 
+  # making sure the drift didnt make the prop of control/treatment > 1 / < 0
+  if(N_total < block_number){
+    stop("The number of blocks can't exceed the number of patients!")
+  }
+
   # computing the group size if its symmetric or not
   group <- rep(floor(N_total / block_number), block_number)
+
   if((N_total - sum(group)) > 0){
-    index <- sample(1:block_number, N_total - sum(group))
+    index        <- sample(1:block_number, N_total - sum(group))
     group[index] <- group[index] + 1
   }
 
@@ -124,6 +134,7 @@ binomialbayes <- function(
   early_success      <- NULL
   early_futility     <- NULL
   drift_p            <- seq(drift / N_total, drift,  length.out = N_total)
+  randomization      <- array(NA, c(simulation, block_number))
 
   # going through all the simulations
   for(k in 1:simulation){
@@ -137,7 +148,7 @@ binomialbayes <- function(
     for(i in 1:block_number){
 
       # if data_total is null, set all the outcome to 0
-      if(dim(data_total)[1] == 0){
+      if(nrow(data_total) < size_equal_randomization){
         yt <- 0
         Nt <- 0
         yc <- 0
@@ -153,18 +164,39 @@ binomialbayes <- function(
                                  b0          = b0,
                                  number_mcmc = number_mcmc)
 
+      if(p == "n/2N"){
+        pi <- nrow(data_total) / (2 * N_total)
+      }
+      else if(p > 0 & p <= 1){
+        pi <- p
+      }
+      else{
+        pi <- 0.5
+      }
         # altering the randomization ratio based on Thall and Wathen's paper
         if(alternative == "greater"){
           diff <- est_interim$posterior_treatment$posterior -
                   est_interim$posterior_control$posterior
 
-          rr <- mean(diff > 0)^p / (mean(diff > 0)^p + mean(diff < 0)^p)
+          rr <- mean(diff > 0)^pi / (mean(diff > 0)^pi + mean(diff < 0)^pi)
         }
         else{
           diff <- est_interim$posterior_treatment$posterior -
                   est_interim$posterior_control$posterior
-          rr <- mean(diff < 0)^p / (mean(diff > 0)^p + mean(diff < 0)^p)
+          rr <- mean(diff < 0)^pi / (mean(diff > 0)^pi + mean(diff < 0)^pi)
         }
+
+      # maximum probability assigning to the treatment group is 0.8
+      if(rr > max_prob){
+        rr <- max_prob
+      }
+
+      # maximum probability assigning to the control group is 0.8
+      else if(rr < (1 - max_prob)){
+        rr <- 1 - max_prob
+      }
+
+      randomization[k, i] <- rr
 
       # creating the dataset for each block
       data <- data.frame(
@@ -172,9 +204,9 @@ binomialbayes <- function(
         outcome   = rep(NA, group[i]))
 
       # adding the outcome with time trends (linear time trend)
-      data$outcome <- rbinom(dim(data)[1], 1, prob = data$treatment * p_treatment +
+      data$outcome <- rbinom(nrow(data), 1, prob = data$treatment * p_treatment +
                                (1 - data$treatment) * p_control +
-                               drift_p[((1:dim(data)[1]) + dim(data_total)[1])])
+                               drift_p[((1:nrow(data)) + nrow(data_total))])
 
       # joining the dataset using rbind
       data_total <- rbind(data_total, data)
@@ -205,16 +237,22 @@ binomialbayes <- function(
       }
 
       # check for early stopping for success
-      if(rr > early_success_prob){
+      if(rr > early_success_prob & nrow(data_total) > min_patient_earlystop){
         index        <- i
         stop_success <- 1
+        if(i  < block_number){
+          randomization[k, (i+1):block_number] <- 0
+        }
         break
       }
 
       # check for early stopping for futility
-      if(rr < futility_prob){
+      if(rr < futility_prob & nrow(data_total) > min_patient_earlystop){
         index         <- i
         stop_futility <- 1
+        if(i  < block_number){
+          randomization[k, (i+1):block_number] <- 0
+        }
         break
       }
 
@@ -338,7 +376,7 @@ binomialbayes <- function(
     # storing all the control, treatment information for each trial simulation
     N_control          <- c(N_control, sum(data_final$treatment == 0))
     N_treatment        <- c(N_treatment, sum(data_final$treatment == 1))
-    sample_size        <- c(sample_size, dim(data_final)[1])
+    sample_size        <- c(sample_size, nrow(data_final))
     prop_diff_estimate <- c(prop_diff_estimate, diff_est)
     early_success      <- c(early_success, stop_success)
     early_futility     <- c(early_futility, stop_futility)
@@ -359,7 +397,8 @@ binomialbayes <- function(
     N_control             = N_control,
     N_treatment           = N_treatment,
     early_success         = early_success,
-    early_futilty         = early_futility
+    early_futilty         = early_futility,
+    randomization_ratio   = randomization
   )
 
   # return output

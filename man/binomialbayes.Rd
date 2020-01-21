@@ -8,7 +8,8 @@ binomialbayes(p_control, p_treatment, N_total, block_number = 4,
   drift = 0, simulation = 10000, a0 = 0.5, b0 = 0.5, p = 0.5,
   number_mcmc = 10000, prob_accept_ha = 0.95,
   early_success_prob = 0.99, futility_prob = 0.01,
-  alternative = "greater")
+  alternative = "greater", size_equal_randomization = 20,
+  min_patient_earlystop = 20, max_prob = 0.8)
 }
 \arguments{
 \item{p_control}{scalar. Proportion of events under the control arm.}
@@ -47,6 +48,15 @@ alternative hypothesis.}
 
 \item{alternative}{character. A string specifying the alternative hypothesis,
 must be one of "less" or "greater" (default).}
+
+\item{size_equal_randomization}{scalar. The number of run in patients because adaptive
+randomization is applied.}
+
+\item{min_patient_earlystop}{scalar. Minimum number of patients before early stopping
+rule is applied.}
+
+\item{max_prob}{scalar. The maximum probability for assigning to treatment/control
+group is 0.8.}
 }
 \value{
 a list with details on the simulation.
@@ -67,6 +77,8 @@ a list with details on the simulation.
   \item{\code{N_control}}{
     vector. The number of patients enrolled in the experimental group for
     each simulation.}
+  \item{\code{randomization_ratio}}{
+    matrix. The randomization ratio allocated for each block.}
 }
 }
 \description{
